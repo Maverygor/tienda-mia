@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Subir foto con Firebase</title>
+  <style>
+    body { font-family: system-ui, Arial; background:#f3f4f6; margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; }
+    .card { width: 360px; background:#fff; border-radius:12px; padding:18px; box-shadow:0 6px 18px rgba(0,0,0,0.08); }
+    h2{margin:0 0 10px}
+    input[type=file]{width:100%}
+    textarea{width:100%; margin-top:8px; height:80px; padding:8px; border-radius:8px; border:1px solid #ddd; resize:none}
+    button{margin-top:10px; width:100%; padding:10px; border-radius:8px; border:0; background:#0b74da; color:white; cursor:pointer}
+    #preview{width:100%; margin-top:10px; border-radius:8px; display:none}
+    .listado{margin-top:18px}
+    .item{border-top:1px solid #eee; padding-top:10px; margin-top:10px}
+    .item img{max-width:100%; border-radius:8px}
+    .small{font-size:13px; color:#666}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Subir foto + descripción</h2>
+
+    <input id="fileInput" type="file" accept="image/*" />
+    <img id="preview" alt="Vista previa" />
+    <textarea id="descripcion" placeholder="Escribe una descripción..."></textarea>
+    <button id="btnSubir">Subir y guardar</button>
+
+    <div class="listado" id="listado">
+      <p class="small">Cargando imágenes guardadas...</p>
+    </div>
+  </div>
+
+  <script type="module">
+    // Tu configuración Firebase corregida ✅
+    const firebaseConfig = {
+      apiKey: "AIzaSyDSGfdvKMc0aISrRknuUyhx7U83_Bj2j5o",
+      authDomain: "tiendas-mias.firebaseapp.com",
+      projectId: "tiendas-mias",
+      storageBucket: "tiendas-mias.appspot.com",
+      messagingSenderId: "370695947447",
+      appId: "1:370695947447:web:b0ad95a73d191031a2f932"
+    };
+
+    // Importar Firebase desde CDN
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-app.js";
+    import { getFirestore, collection, addDoc, serverTimestamp, query, orderBy, getDocs } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js";
+    import { getStorage, ref as storageRef, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-storage.js";
+
+    // Inicializar Firebase
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const storage = getStorage(app);
+
+    // Elementos DOM
+    const fileInput = document.getElementById('fileInput');
+    const preview = document.getElementById('preview');
+    const descripcion = document.getElementById('descripcion');
+    const btnSubir = document.getElementById('btnSubir');
+    const listado = document.getElementById('listado');
+
+    // Mostrar vista previa local
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files[0];
+      if (!file) { preview.style.display = 'none'; return; }
+      const url = URL.createObjectURL(file);
+      preview.src = url;
+      preview.style.display = 'block';
+    });
+
+    // Subir imagen a Firebase Storage + guardar en Firestore
+    btnSubir.addEventListener('click', async () => {
+      const file = fileInput.files[0];
+      const text = descripcion.value.trim();
+      if (!file) { alert('Selecciona una imagen primero'); return; }
+
+      try {
+        btnSubir.disabled = true;
+        btnSubir.textContent = 'Subiendo...';
+
+        const path = `uploads/${Date.now()}_${file.name}`;
+        const ref = storageRef(storage, path);
+        const uploadTask = uploadBytesResumable(ref, file);
+
+        await new Promise((resolve, reject) => {
+          uploadTask.on('state_changed', null, reject, resolve);
+        });
+
+        const url = await getDownloadURL(ref);
+
+        await addDoc(collection(db, 'fotos'), {
+          imageUrl: url,
+          description: text || '',
+          storagePath: path,
+          createdAt: serverTimestamp()
+        });
+
+        fileInput.value = '';
+        descripcion.value = '';
+        preview.style.display = 'none';
+
+        alert('Subida completa ✔');
+        cargarListado();
+
+      } catch (err) {
+        console.error(err);
+        alert('Error al subir: ' + err.message);
+      } finally {
+        btnSubir.disabled = false;
+        btnSubir.textContent = 'Subir y guardar';
+      }
+    });
+
+    // Cargar imágenes guardadas
+    async function cargarListado() {
+      listado.innerHTML = '<p class="small">Cargando imágenes guardadas...</p>';
+      try {
+        const q = query(collection(db, 'fotos'), orderBy('createdAt', 'desc'));
+        const snap = await getDocs(q);
+        if (snap.empty) {
+          listado.innerHTML = '<p class="small">No hay imágenes aún.</p>';
+          return;
+        }
+        listado.innerHTML = '';
+        snap.forEach(doc => {
+          const data = doc.data();
+          const div = document.createElement('div');
+          div.className = 'item';
+          div.innerHTML = `
+            <div class="small">Guardado: ${data.createdAt ? new Date(data.createdAt.seconds*1000).toLocaleString() : ''}</div>
+            <img src="${data.imageUrl}" alt="Foto" />
+            <div class="small"><strong>Descripción:</strong> ${escapeHtml(data.description || '')}</div>
+          `;
+          listado.appendChild(div);
+        });
+      } catch (err) {
+        console.error(err);
+        listado.innerHTML = '<p class="small">Error cargando imágenes.</p>';
+      }
+    }
+
+    function escapeHtml(str) {
+      return String(str)
+        .replaceAll('&','&amp;')
+        .replaceAll('<','&lt;')
+        .replaceAll('>','&gt;')
+        .replaceAll('"','&quot;')
+        .replaceAll("'",'&#039;');
+    }
+
+    cargarListado();
+  </script>
+</body>
+</html>
